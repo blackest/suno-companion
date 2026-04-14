@@ -16,7 +16,7 @@ def build_from_library():
     conn = sqlite3.connect(DB_PATH)
     cur = conn.cursor()
 
-    cur.execute('CREATE TABLE tracks (id TEXT PRIMARY KEY, title TEXT, file_name TEXT, created_at TEXT, image_url TEXT, rating REAL, on_distrokid INTEGER, on_youtube INTEGER, has_video INTEGER, album TEXT)')
+    cur.execute('CREATE TABLE tracks (id TEXT PRIMARY KEY, title TEXT, file_name TEXT, created_at TEXT, image_url TEXT, rating REAL, on_distrokid INTEGER, on_youtube INTEGER, has_video INTEGER, album TEXT, audio_url TEXT)')
     cur.execute('CREATE TABLE technical_dna (track_id TEXT, model_version TEXT, duration REAL, weirdness REAL)')
     cur.execute('CREATE TABLE creative_intent (track_id TEXT, lyrics TEXT, input_prompt TEXT)')
 
@@ -45,6 +45,7 @@ def build_from_library():
                 title = data.get('title', 'Untitled')
                 created_at = data.get('created_at')
                 image_url = data.get('image_url', '')
+                audio_url = data.get('audio_url', '')
                 
                 # Custom Vault Metadata
                 rating = data.get('vault_rating', 0.0)
@@ -63,8 +64,8 @@ def build_from_library():
                 input_p = data.get('input_prompt', '') # Top-level or nested
 
                 # 3. Insert into tables
-                cur.execute("INSERT INTO tracks VALUES (?,?,?,?,?,?,?,?,?,?)", 
-                           (track_id, title, audio_filename, created_at, image_url, rating, on_dk, on_yt, has_vid, album))
+                cur.execute("INSERT INTO tracks VALUES (?,?,?,?,?,?,?,?,?,?,?)", 
+                           (track_id, title, audio_filename, created_at, image_url, rating, on_dk, on_yt, has_vid, album, audio_url))
                 
                 cur.execute("INSERT INTO technical_dna VALUES (?,?,?,?)", 
                            (track_id, model, duration, 0.0)) # Default weirdness to 0.0

@@ -6,11 +6,31 @@ import os
 import json
 import sqlite3
 import re
-from mutagen.id3 import ID3, TIT2
+import socket
+import platform
+
+try:
+    from mutagen.id3 import ID3, TIT2
+    MUTAGEN_AVAILABLE = True
+except ImportError:
+    MUTAGEN_AVAILABLE = False
+    print("Warning: Mutagen not installed. ID3 tagging disabled.")
 
 PORT = 8001
 LIBRARY_DIR = "library"
 DB_PATH = "suno_master.db"
+
+def get_ip():
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        # doesn't even have to be reachable
+        s.connect(('10.255.255.255', 1))
+        IP = s.getsockname()[0]
+    except Exception:
+        IP = '127.0.0.1'
+    finally:
+        s.close()
+    return IP
 
 class SunoVaultHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
@@ -23,7 +43,6 @@ class SunoVaultHandler(http.server.SimpleHTTPRequestHandler):
                 if result.returncode == 0:
                     self.send_response(200)
                     self.send_header('Content-Type', 'application/json')
-                    self.send_header('Access-Control-Allow-Origin', '*')
                     self.end_headers()
                     self.wfile.write(json.dumps({"status": "success", "output": result.stdout}).encode())
                     print("Database rebuild successful.")
@@ -47,28 +66,28 @@ class SunoVaultHandler(http.server.SimpleHTTPRequestHandler):
                 file_name = os.path.basename(file_name)
                 full_path = os.path.join(os.getcwd(), LIBRARY_DIR, file_name)
                 
-                # Check for both .mp3 and .mp3.txt since they often go together
-                if not os.path.exists(full_path):
-                    # Try appending .mp3 if it was missing
-                    if not full_path.endswith('.mp3'):
-                        full_path += '.mp3'
+                if not os.path.exists(full_path) and not full_path.endswith('.mp3'):
+                    full_path += '.mp3'
 
                 if os.path.exists(full_path):
-                    print(f"Revealing in Finder: {full_path}")
-                    # macOS specific 'reveal' command (-R selects the file in Finder)
-                    subprocess.run(["open", "-R", full_path])
-                    self.send_response(200)
-                    self.send_header('Access-Control-Allow-Origin', '*')
-                    self.end_headers()
-                    self.wfile.write(b"OK")
+                    system = platform.system()
+                    if system == "Darwin": # macOS
+                        print(f"Revealing in Finder: {full_path}")
+                        subprocess.run(["open", "-R", full_path])
+                        self.send_response(200)
+                        self.end_headers()
+                        self.wfile.write(b"OK")
+                    elif system == "Linux": # Pi / Ubuntu
+                        print(f"Running on Linux - 'Reveal' not available in headless mode: {full_path}")
+                        self.send_error(501, "Reveal only works on macOS")
+                    else:
+                        self.send_error(501, "Reveal not supported on this platform")
                 else:
-                    print(f"File not found for reveal: {full_path}")
                     self.send_error(404, f"File not found: {file_name}")
             except Exception as e:
                 print(f"Error in reveal: {e}")
                 self.send_error(500, str(e))
         else:
-            # Serve everything else (HTML, DB, library files) normally
             super().do_GET()
 
     def do_POST(self):
@@ -141,8 +160,8 @@ class SunoVaultHandler(http.server.SimpleHTTPRequestHandler):
                             f.write(new_content)
                         print(f"Synced track data to file: {txt_path}")
 
-                # 3. If title changed, update ID3
-                if 'title' in data:
+                # 3. If title changed, update ID3 (only if mutagen available)
+                if 'title' in data and MUTAGEN_AVAILABLE:
                     mp3_path = os.path.join(os.getcwd(), LIBRARY_DIR, audio_file)
                     if os.path.exists(mp3_path):
                         try:
@@ -154,7 +173,6 @@ class SunoVaultHandler(http.server.SimpleHTTPRequestHandler):
                 
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/json')
-                self.send_header('Access-Control-Allow-Origin', '*')
                 self.end_headers()
                 self.wfile.write(json.dumps({"status": "success"}).encode())
                 print(f"Successfully updated track {track_id}")
@@ -173,8 +191,13 @@ if __name__ == "__main__":
     # Ensure we are in the right directory
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
     
-    print(f"Suno Vault running at http://localhost:{PORT}")
-    print(f"Serving files from: {os.getcwd()}")
+    ip = get_ip()
+    print("-" * 40)
+    print(f"🚀 Suno Vault started!")
+    print(f"🏠 Local URL:  http://localhost:{PORT}")
+    print(f"🌐 Network URL: http://{ip}:{PORT}")
+    print(f"📁 Root Path:   {os.getcwd()}")
+    print("-" * 40)
     
     # Allow address reuse to avoid "Address already in use" errors on restart
     socketserver.TCPServer.allow_reuse_address = True

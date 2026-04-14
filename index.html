@@ -23,6 +23,12 @@ body {
   height: 100vh;
   overflow: hidden;
 }
+.player-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 15px;
+}
 .sidebar {
   flex: 1;
   display: flex;
@@ -177,6 +183,7 @@ let db = null;
 let SQLLib = null;
 let currentTrackId = null;
 let currentFileName = null;
+let playMode = localStorage.getItem('playMode') || 'local'; 
 const LIBRARY_PATH = "library/";
 
 async function initSQL() {
@@ -363,7 +370,7 @@ function runSearch(term) {
 
   const query = `
     SELECT t.title, t.file_name, i.lyrics, d.model_version, d.duration, t.id, t.image_url, 
-           t.rating, t.album, t.on_distrokid, t.on_youtube, t.has_video, t.created_at
+           t.rating, t.album, t.on_distrokid, t.on_youtube, t.has_video, t.created_at, t.audio_url
     FROM tracks t
     LEFT JOIN technical_dna d ON t.id = d.track_id
     LEFT JOIN creative_intent i ON t.id = i.track_id
@@ -401,7 +408,7 @@ function runSearch(term) {
 /* ---------- DETAILS ---------- */
 
 function showDetails(row) {
-  const [title, fileName, lyrics, model, duration, id, imageUrl, rating, album, onDk, onYt, hasVid, createdAt] = row;
+  const [title, fileName, lyrics, model, duration, id, imageUrl, rating, album, onDk, onYt, hasVid, createdAt, audioUrl] = row;
   currentTrackId = id;
   currentFileName = fileName;
 
@@ -425,27 +432,58 @@ function showDetails(row) {
     <div class="album-label">Album: <span class="album-value" onclick="editAlbum()">${album || 'None (Add to Album)'}</span></div>
   `;
 
+  const localSrc = `${LIBRARY_PATH}${fileName}`;
+  const cloudSrc = audioUrl || "";
+  const initialSrc = (playMode === 'local' && fileName) ? localSrc : cloudSrc;
+
   document.getElementById("player-ui").innerHTML = `
-    <div style="display:flex; align-items:center; gap:15px; margin-bottom:15px;">
-      <input type="number" step="0.1" min="0" max="100" class="rating-input" value="${rating || 0}" onchange="updateField('rating', parseFloat(this.value))">
-      <span style="font-size:20px; font-weight:bold; color:#555">% Rating</span>
+    <div class="player-header">
+      <div style="display:flex; align-items:center; gap:10px;">
+        <input type="number" step="0.1" min="0" max="100" class="rating-input" value="${rating || 0}" onchange="updateField('rating', parseFloat(this.value))">
+        <span style="font-size:18px; font-weight:bold; color:#555">% Rating</span>
+      </div>
+      <div class="status-pill ${playMode === 'cloud' ? 'active' : ''}" onclick="togglePlayMode(this, '${localSrc}', '${cloudSrc}')" style="margin:0; font-weight:bold; font-size:11px;">
+        ${playMode === 'cloud' ? '☁️ CLOUD' : '🏠 LOCAL'}
+      </div>
     </div>
     <div class="status-row">
       <div class="status-pill ${onDk ? 'active' : ''}" onclick="toggleField('on_distrokid', ${onDk})">DistroKid</div>
       <div class="status-pill ${onYt ? 'active' : ''}" onclick="toggleField('on_youtube', ${onYt})">YouTube</div>
       <div class="status-pill ${hasVid ? 'active' : ''}" onclick="toggleField('has_video', ${hasVid})">Video</div>
     </div>
-    <audio controls autoplay src="${LIBRARY_PATH}${fileName}" style="width:100%"></audio>
+    <audio id="main-player" controls autoplay src="${initialSrc}" style="width:100%"></audio>
+    <div id="player-error" style="color: #ff4444; font-size: 11px; margin-top: 5px; display: none;">Local file not found, falling back to cloud...</div>
     <div style="display: flex; gap: 10px; margin-top: 10px;">
       <button class="btn btn-secondary" style="flex: 1; margin: 0; font-size: 12px;" onclick="copySunoLink('${id}')">📋 Copy Link</button>
-      <a href="${LIBRARY_PATH}${fileName}" download="${safeTitle}" class="btn btn-secondary" style="flex: 1; margin: 0; font-size: 12px; text-decoration: none; display: flex; align-items: center; justify-content: center;">⬇️ Download</a>
+      <a href="${localSrc}" download="${safeTitle}" class="btn btn-secondary" style="flex: 1; margin: 0; font-size: 12px; text-decoration: none; display: flex; align-items: center; justify-content: center;">⬇️ Download</a>
     </div>
   `;
+
+  const player = document.getElementById("main-player");
+  player.onerror = () => {
+    if (playMode === 'local' && cloudSrc) {
+      document.getElementById("player-error").style.display = "block";
+      player.src = cloudSrc;
+      player.play();
+    }
+  };
 
   document.getElementById("det-lyrics").innerText = lyrics || "No lyrics available.";
   document.getElementById("reveal-btn").onclick = () => revealInFinder(fileName);
   document.getElementById("suno-btn").href = `https://suno.com/song/${id}`;
   document.getElementById("details-panel").style.display = "block";
+}
+
+function togglePlayMode(el, localSrc, cloudSrc) {
+  playMode = playMode === 'local' ? 'cloud' : 'local';
+  localStorage.setItem('playMode', playMode);
+  
+  const player = document.getElementById("main-player");
+  el.innerText = playMode === 'cloud' ? '☁️ CLOUD' : '🏠 LOCAL';
+  el.classList.toggle('active');
+  
+  player.src = playMode === 'cloud' ? cloudSrc : localSrc;
+  player.play();
 }
 
 function copySunoLink(id) {
