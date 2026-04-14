@@ -2,6 +2,11 @@
 
 A simple, local-first web interface to manage, search, and organize your [Suno AI](https://suno.com) songs. It indexes your downloaded tracks and their metadata, allowing you to quickly browse your production history.
 
+Suno Tracks Exporter is a nice little chrome extension and it allows you to take your songs and meta data out of suno to work with locally
+but it does so with . mp3 files and .mp3.txt files. 
+
+the main purpose of this project is to allow you to find among your songs say with 'heart' in the song. Also has the different takes and links back to the song on suno. it just makes things easy and fast. The Extension Suno Track Importer is very good , this is for the next step. 
+
 ## Features
 
 - **Local-First**: Works with your existing folder of Suno downloads.
