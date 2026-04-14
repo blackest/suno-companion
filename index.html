@@ -1,0 +1,523 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Suno Production Vault</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.6.2/sql-wasm.js"></script>
+
+<style>
+:root {
+  --bg: #0b0b0b;
+  --panel: #161616;
+  --accent: #007aff;
+  --text: #e0e0e0;
+  --border: #2a2a2a;
+  --success: #28a745;
+}
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  margin: 0;
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+.sidebar {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 20px;
+  overflow-y: auto;
+}
+.btn {
+  padding: 10px 15px;
+  background: var(--accent);
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  margin-bottom: 10px;
+  font-size: 14px;
+  transition: opacity 0.2s;
+}
+.btn:hover { opacity: 0.8; }
+.btn-secondary { background: #444; }
+.btn-reveal { background: #34c759; margin-top: 10px; width: 100%; }
+
+#search {
+  width: 100%;
+  padding: 15px;
+  background: #1d1d1d;
+  color: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 20px;
+  font-size: 16px;
+  outline: none;
+}
+table { width: 100%; border-collapse: collapse; }
+th { padding: 12px; background: var(--panel); position: sticky; top: 0; text-align: left; }
+td { padding: 12px; border-bottom: 1px solid #1a1a1a; cursor: pointer; }
+tr:hover { background: #1a1a1a; }
+
+#details-panel {
+  width: 480px;
+  background: var(--panel);
+  border-left: 1px solid var(--border);
+  padding: 25px;
+  display: none;
+  overflow-y: auto;
+}
+.tech-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  background: #333;
+  border-radius: 4px;
+  font-size: 11px;
+  margin-right: 5px;
+  margin-bottom: 5px;
+}
+pre {
+  white-space: pre-wrap;
+  background: #000;
+  padding: 15px;
+  border-radius: 5px;
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+}
+#det-title {
+  margin-top: 0;
+  cursor: pointer;
+}
+#det-title:hover:after {
+  content: " ✎";
+  font-size: 14px;
+  color: var(--accent);
+}
+.status-row {
+  display: flex;
+  gap: 10px;
+  margin: 15px 0;
+  flex-wrap: wrap;
+}
+.status-pill {
+  padding: 5px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  background: #222;
+  transition: all 0.2s;
+}
+.status-pill.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+.rating-input {
+  background: #000;
+  color: var(--accent);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 5px;
+  font-size: 24px;
+  width: 90px;
+  font-weight: bold;
+  text-align: center;
+}
+.album-label {
+  color: #888;
+  font-size: 14px;
+  margin-top: 10px;
+}
+.album-value {
+  color: var(--text);
+  font-style: italic;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+</style>
+</head>
+
+<body>
+
+<div class="sidebar">
+  <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 10px;">
+    <button class="btn" style="margin-bottom: 0;" onclick="pickDB()">Connect Database</button>
+    <button class="btn btn-secondary" style="margin-bottom: 0;" id="refresh-btn" onclick="refreshLibrary()">Refresh Library</button>
+    <span id="sync-status" style="font-size: 12px; color: #888;"></span>
+    <input type="file" id="db-fallback" style="display:none" accept=".db" onchange="handleFallbackFile(this)" />
+  </div>
+  <input type="text" id="search" placeholder="Search titles or lyrics..." disabled oninput="runSearch(this.value)" />
+  <table>
+    <thead><tr><th>Track</th><th>Model</th><th>Time</th><th>Rating</th></tr></thead>
+    <tbody id="results"></tbody>
+  </table>
+</div>
+
+<div id="details-panel">
+  <span style="float:right; cursor:pointer; font-size: 24px;" onclick="this.parentElement.style.display='none'">✕</span>
+  <img id="det-img" style="width: 100%; border-radius: 8px; margin-bottom: 15px; background: #222; display: none;" />
+  <h2 id="det-title" onclick="editTitle()"></h2>
+  <div id="player-ui"></div>
+  <div style="display: flex; gap: 10px; margin-top: 10px;">
+    <button class="btn btn-reveal" id="reveal-btn" style="margin-top: 0; flex: 1;">Reveal in Finder</button>
+    <a id="suno-btn" target="_blank" class="btn btn-secondary" style="margin-bottom: 0; flex: 1; text-align: center; text-decoration: none; display: flex; align-items: center; justify-content: center; background: #555;">View on Suno</a>
+  </div>
+  <div id="tech-specs" style="margin-top: 15px;"></div>
+  <h4 style="margin-bottom: 10px; color: #888;">Lyrics / Prompt</h4>
+  <pre id="det-lyrics"></pre>
+</div>
+
+<script>
+let db = null;
+let SQLLib = null;
+let currentTrackId = null;
+let currentFileName = null;
+const LIBRARY_PATH = "library/";
+
+async function initSQL() {
+  if (!SQLLib) {
+    SQLLib = await initSqlJs({
+      locateFile: file => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.6.2/${file}`
+    });
+  }
+}
+
+/* ---------- FILE PICKER ---------- */
+
+async function refreshLibrary() {
+  const btn = document.getElementById("refresh-btn");
+  const status = document.getElementById("sync-status");
+  const oldText = btn.innerText;
+  
+  btn.disabled = true;
+  btn.innerText = "Refreshing...";
+  status.innerText = "Syncing library files...";
+  
+  try {
+    const response = await fetch('/refresh');
+    if (response.ok) {
+      status.innerText = "Reloading database...";
+      const fetched = await fetchDB();
+      if (fetched) {
+        status.innerText = "Synced!";
+        setTimeout(() => status.innerText = "", 3000);
+      } else {
+        const handle = await getHandle();
+        if (handle) {
+          await loadDB(handle);
+          status.innerText = "Synced (from local handle)!";
+          setTimeout(() => status.innerText = "", 3000);
+        } else {
+          alert("Library synced! Please click 'Connect Database' to reload.");
+        }
+      }
+    } else {
+      alert("Failed to refresh library. Is server.py running?");
+    }
+  } catch (err) {
+    console.error(err);
+    alert("Error refreshing library.");
+  } finally {
+    btn.disabled = false;
+    btn.innerText = oldText;
+  }
+}
+
+async function pickDB() {
+  if (window.showOpenFilePicker) {
+    try {
+      const [handle] = await window.showOpenFilePicker({
+        types: [{ accept: { 'application/octet-stream': ['.db'] } }]
+      });
+
+      await saveHandle(handle);
+      await loadDB(handle);
+    } catch (err) {
+      console.log("Picker cancelled or failed", err);
+    }
+  } else {
+    document.getElementById('db-fallback').click();
+  }
+}
+
+async function handleFallbackFile(input) {
+  const file = input.files[0];
+  if (file) {
+    await loadDB(file);
+  }
+}
+
+async function fetchDB() {
+  await initSQL();
+  try {
+    const response = await fetch('/suno_master.db');
+    if (!response.ok) return false;
+    const buffer = await response.arrayBuffer();
+    db = new SQLLib.Database(new Uint8Array(buffer));
+    document.getElementById("search").disabled = false;
+    runSearch(document.getElementById("search").value);
+    return true;
+  } catch (err) {
+    return false;
+  }
+}
+
+async function loadDB(source) {
+  await initSQL();
+
+  let buffer;
+  try {
+    if (source instanceof File) {
+      buffer = await source.arrayBuffer();
+    } else {
+      const file = await source.getFile();
+      buffer = await file.arrayBuffer();
+    }
+
+    db = new SQLLib.Database(new Uint8Array(buffer));
+
+    document.getElementById("search").disabled = false;
+    runSearch(document.getElementById("search").value);
+  } catch (err) {
+    console.error("Load DB failed", err);
+    alert("Could not load database file.");
+  }
+}
+
+/* ---------- PERSIST HANDLE ---------- */
+
+function saveHandle(handle) {
+  return new Promise(resolve => {
+    const req = indexedDB.open("sunoDB", 2);
+    req.onupgradeneeded = (e) => {
+      const dbi = e.target.result;
+      if (!dbi.objectStoreNames.contains("files")) {
+        dbi.createObjectStore("files");
+      }
+    };
+    req.onsuccess = () => {
+      const dbi = req.result;
+      const tx = dbi.transaction("files", "readwrite");
+      tx.objectStore("files").put(handle, "db");
+      tx.oncomplete = resolve;
+    };
+  });
+}
+
+function getHandle() {
+  return new Promise(resolve => {
+    const req = indexedDB.open("sunoDB", 2);
+    req.onupgradeneeded = (e) => {
+      const dbi = e.target.result;
+      if (!dbi.objectStoreNames.contains("files")) {
+        dbi.createObjectStore("files");
+      }
+    };
+    req.onsuccess = () => {
+      const dbi = req.result;
+      if (!dbi.objectStoreNames.contains("files")) {
+        resolve(null);
+        return;
+      }
+      const tx = dbi.transaction("files", "readonly");
+      const get = tx.objectStore("files").get("db");
+      get.onsuccess = () => resolve(get.result);
+      get.onerror = () => resolve(null);
+    };
+    req.onerror = () => resolve(null);
+  });
+}
+
+/* ---------- AUTO LOAD ---------- */
+
+window.onload = async () => {
+  // 1. Try to fetch from server automatically
+  const fetched = await fetchDB();
+  if (fetched) return;
+
+  // 2. Fallback to persisted handle
+  const handle = await getHandle();
+  if (!handle) return;
+
+  try {
+    const perm = await handle.queryPermission({ mode: 'read' });
+    if (perm === 'granted') {
+      await loadDB(handle);
+    }
+  } catch (e) {
+    console.error("Auto-load failed", e);
+  }
+};
+
+/* ---------- SEARCH ---------- */
+
+function runSearch(term) {
+  if (!db) return;
+
+  const safe = term.replace(/'/g, "''");
+
+  const query = `
+    SELECT t.title, t.file_name, i.lyrics, d.model_version, d.duration, t.id, t.image_url, 
+           t.rating, t.album, t.on_distrokid, t.on_youtube, t.has_video, t.created_at
+    FROM tracks t
+    LEFT JOIN technical_dna d ON t.id = d.track_id
+    LEFT JOIN creative_intent i ON t.id = i.track_id
+    WHERE t.title LIKE '%${safe}%' OR i.lyrics LIKE '%${safe}%' OR t.album LIKE '%${safe}%' OR i.input_prompt LIKE '%${safe}%'
+    ORDER BY t.created_at DESC
+    LIMIT 100
+  `;
+
+  const res = db.exec(query);
+  const body = document.getElementById("results");
+  body.innerHTML = "";
+
+  if (!res[0]) return;
+
+  res[0].values.forEach(row => {
+    const tr = document.createElement("tr");
+    tr.onclick = () => showDetails(row);
+    
+    const d = row[4] || 0;
+    const mins = Math.floor(d / 60);
+    const secs = String(Math.floor(d % 60)).padStart(2,'0');
+    const time = `${mins}:${secs}`;
+    
+    const rating = row[7] ? `${row[7]}%` : '';
+    tr.innerHTML = `
+      <td>${row[0] || 'Untitled'} <br><small style="color:#666">${row[8] || ''}</small></td>
+      <td>${row[3] || 'v5'}</td>
+      <td>${time}</td>
+      <td style="color:var(--accent); font-weight:bold">${rating}</td>
+    `;
+    body.appendChild(tr);
+  });
+}
+
+/* ---------- DETAILS ---------- */
+
+function showDetails(row) {
+  const [title, fileName, lyrics, model, duration, id, imageUrl, rating, album, onDk, onYt, hasVid, createdAt] = row;
+  currentTrackId = id;
+  currentFileName = fileName;
+
+  document.getElementById("det-title").innerText = title || "Untitled";
+  
+  const imgEl = document.getElementById("det-img");
+  imgEl.src = imageUrl || "";
+  imgEl.style.display = imageUrl ? "block" : "none";
+
+  const d = duration || 0;
+  const mins = Math.floor(d / 60);
+  const secs = String(Math.floor(d % 60)).padStart(2,'0');
+  
+  const dateStr = createdAt ? new Date(createdAt).toLocaleDateString() : 'Unknown';
+  const safeTitle = (title || "Untitled").replace(/[\\\/:*?"<>|]/g, "_") + ".mp3";
+
+  document.getElementById("tech-specs").innerHTML = `
+    <span class="tech-pill">Model: ${model || 'v5'}</span>
+    <span class="tech-pill">Length: ${mins}:${secs}</span>
+    <span class="tech-pill">Created: ${dateStr}</span>
+    <div class="album-label">Album: <span class="album-value" onclick="editAlbum()">${album || 'None (Add to Album)'}</span></div>
+  `;
+
+  document.getElementById("player-ui").innerHTML = `
+    <div style="display:flex; align-items:center; gap:15px; margin-bottom:15px;">
+      <input type="number" step="0.1" min="0" max="100" class="rating-input" value="${rating || 0}" onchange="updateField('rating', parseFloat(this.value))">
+      <span style="font-size:20px; font-weight:bold; color:#555">% Rating</span>
+    </div>
+    <div class="status-row">
+      <div class="status-pill ${onDk ? 'active' : ''}" onclick="toggleField('on_distrokid', ${onDk})">DistroKid</div>
+      <div class="status-pill ${onYt ? 'active' : ''}" onclick="toggleField('on_youtube', ${onYt})">YouTube</div>
+      <div class="status-pill ${hasVid ? 'active' : ''}" onclick="toggleField('has_video', ${hasVid})">Video</div>
+    </div>
+    <audio controls autoplay src="${LIBRARY_PATH}${fileName}" style="width:100%"></audio>
+    <div style="display: flex; gap: 10px; margin-top: 10px;">
+      <button class="btn btn-secondary" style="flex: 1; margin: 0; font-size: 12px;" onclick="copySunoLink('${id}')">📋 Copy Link</button>
+      <a href="${LIBRARY_PATH}${fileName}" download="${safeTitle}" class="btn btn-secondary" style="flex: 1; margin: 0; font-size: 12px; text-decoration: none; display: flex; align-items: center; justify-content: center;">⬇️ Download</a>
+    </div>
+  `;
+
+  document.getElementById("det-lyrics").innerText = lyrics || "No lyrics available.";
+  document.getElementById("reveal-btn").onclick = () => revealInFinder(fileName);
+  document.getElementById("suno-btn").href = `https://suno.com/song/${id}`;
+  document.getElementById("details-panel").style.display = "block";
+}
+
+function copySunoLink(id) {
+  const url = `https://suno.com/song/${id}`;
+  navigator.clipboard.writeText(url).then(() => {
+    alert("Suno link copied to clipboard!");
+  });
+}
+
+async function updateField(field, value) {
+  try {
+    const data = { id: currentTrackId };
+    data[field] = value;
+    
+    const response = await fetch('/update_track', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    
+    if (response.ok) {
+      let sqlValue = value;
+      if (typeof value === 'string') {
+        sqlValue = `'${value.replace(/'/g, "''")}'`;
+      }
+      db.run(`UPDATE tracks SET ${field} = ${sqlValue} WHERE id = '${currentTrackId}'`);
+    } else {
+      alert("Failed to update field on server.");
+    }
+  } catch (err) { console.error(err); }
+}
+
+function toggleField(field, currentVal) {
+  const newVal = currentVal ? 0 : 1;
+  updateField(field, newVal).then(() => {
+    runSearch(document.getElementById("search").value);
+  });
+}
+
+function editAlbum() {
+  const oldAlbum = event.target.innerText === 'None (Add to Album)' ? '' : event.target.innerText;
+  const newAlbum = prompt("Enter Album Name:", oldAlbum);
+  if (newAlbum !== null) {
+    updateField('album', newAlbum).then(() => {
+      runSearch(document.getElementById("search").value);
+    });
+  }
+}
+
+async function editTitle() {
+  const oldTitle = document.getElementById("det-title").innerText;
+  const newTitle = prompt("Enter new title:", oldTitle);
+  if (newTitle && newTitle !== oldTitle) {
+    updateField('title', newTitle).then(() => {
+      document.getElementById("det-title").innerText = newTitle;
+      runSearch(document.getElementById("search").value);
+    });
+  }
+}
+
+async function revealInFinder(fileName) {
+  try {
+    const response = await fetch(`/reveal?file=${encodeURIComponent(fileName)}`);
+    if (!response.ok) {
+      alert("Failed to reveal file. Make sure server.py is running.");
+    }
+  } catch (err) {
+    console.error(err);
+    alert("Server error. Is server.py running on localhost:8001?");
+  }
+}
+</script>
+
+</body>
+</html>
